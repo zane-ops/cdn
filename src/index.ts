@@ -18,7 +18,7 @@ async function generate256Hash(message: string) {
 	return hashHex;
 }
 
-export function durationToMs(
+function durationToMs(
 	value: number,
 	unit: "seconds" | "minutes" | "hours" | "days" | "weeks",
 ): number {
@@ -161,12 +161,12 @@ export default {
 
 					if (lastPingResult?.ping_timestamp) {
 						const lastPingTime = new Date(lastPingResult.ping_timestamp);
-						const hoursDifference =
+						const minutesDifference =
 							(currentTime.getTime() - lastPingTime.getTime()) /
-							durationToMs(1, "hours");
+							durationToMs(30, "minutes");
 
 						// Only record if more than 1 hour has passed
-						shouldRecordPing = hoursDifference >= 1;
+						shouldRecordPing = minutesDifference >= 1;
 					}
 
 					if (shouldRecordPing) {
@@ -183,7 +183,7 @@ export default {
 
 					return Response.json({
 						success: false,
-						message: "Ping not recorded - less than 1 hour since last ping",
+						message: "Ping not recorded - less than 30 minutes since last ping",
 					});
 				}
 
