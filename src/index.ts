@@ -39,9 +39,7 @@ async function generateHMAC256(message: string, secret: string) {
 
 // HMAC helper treats the SHA‐256 hex as the “message”
 async function generateDoubleHash(ip: string, secret: string) {
-	const sha = await generate256Hash(ip);
-	const hmac = await generateHMAC256(sha, secret);
-	return { sha, hmac };
+	return await generateHMAC256(await generate256Hash(ip), secret);
 }
 
 function durationToMs(
@@ -67,17 +65,15 @@ type Ping = {
 };
 
 async function upsertIp(ip: string, env: Env) {
-	const { sha, hmac } = await generateDoubleHash(ip, env.IP_HASH_PEPPER);
+	const hmac = await generateDoubleHash(ip, env.IP_HASH_PEPPER);
 	await env.DB.prepare(`
-	  INSERT INTO ip_registry (ip_hash, ip_hmac)
-	  VALUES (?, ?)
-	  ON CONFLICT(ip_hash) DO UPDATE
-		SET ip_hmac = EXCLUDED.ip_hmac
+	  INSERT INTO ip_registry (ip_hmac)
+	  VALUES (?)
+	  ON CONFLICT DO NOTHING
 	`)
-		.bind(sha, hmac)
+		.bind(hmac)
 		.run();
 	return {
-		sha,
 		hmac,
 	};
 }
@@ -128,7 +124,7 @@ export default {
 				const {
 					results: [data],
 				} = await env.DB.prepare(
-					"SELECT count(ip_hash) as total FROM ip_registry",
+					"SELECT count(id) as total FROM ip_registry",
 				).all<{ total: number }>();
 				return Response.json(data);
 			}
