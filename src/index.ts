@@ -18,6 +18,32 @@ async function generate256Hash(message: string) {
 	return hashHex;
 }
 
+async function generateHMAC256(message: string, secret: string) {
+	const encoder = new TextEncoder();
+	const keyData = encoder.encode(secret);
+	const cryptoKey = await crypto.subtle.importKey(
+		"raw",
+		keyData,
+		{ name: "HMAC", hash: { name: "SHA-256" } },
+		false,
+		["sign"],
+	);
+	const signed_message = await crypto.subtle.sign(
+		"HMAC",
+		cryptoKey,
+		encoder.encode(message),
+	);
+	const hashArray = Array.from(new Uint8Array(signed_message));
+	return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+// HMAC helper treats the SHA‐256 hex as the “message”
+async function generateDoubleHash(ip: string, secret: string) {
+	const sha = await generate256Hash(ip);
+	const hmac = await generateHMAC256(sha, secret);
+	return { sha, hmac };
+}
+
 function durationToMs(
 	value: number,
 	unit: "seconds" | "minutes" | "hours" | "days" | "weeks",
@@ -39,6 +65,36 @@ type Release = {
 type Ping = {
 	ping_timestamp: string;
 };
+
+async function upsertIp(ip: string, env: Env) {
+	const { sha, hmac } = await generateDoubleHash(ip, env.IP_HASH_PEPPER);
+	await env.DB.prepare(`
+	  INSERT INTO ip_registry (ip_hash, ip_hmac)
+	  VALUES (?, ?)
+	  ON CONFLICT(ip_hash) DO UPDATE
+		SET ip_hmac = EXCLUDED.ip_hmac
+	`)
+		.bind(sha, hmac)
+		.run();
+	return {
+		sha,
+		hmac,
+	};
+}
+
+// Backfill existing rows
+// async function backfillIpHmac(env: Env) {
+// 	const { results } = await env.DB.prepare(
+// 		"SELECT ip_hash FROM ip_registry WHERE ip_hmac IS NULL",
+// 	).all<{ ip_hash: string }>();
+
+// 	for (const { ip_hash } of results) {
+// 		const hmac = await generateHMAC256(ip_hash, env.IP_HASH_PEPPER);
+// 		await env.DB.prepare("UPDATE ip_registry SET ip_hmac = ? WHERE ip_hash = ?")
+// 			.bind(hmac, ip_hash)
+// 			.run();
+// 	}
+// }
 
 export default {
 	async fetch(request, env, ctx) {
@@ -62,13 +118,7 @@ export default {
 			case "/makefile": {
 				const ip = request.headers.get("cf-connecting-ip");
 				if (ip) {
-					const ipHash = await generate256Hash(ip);
-
-					await env.DB.prepare(
-						"INSERT INTO ip_registry (ip_hash) VALUES (?) ON CONFLICT (ip_hash) DO NOTHING",
-					)
-						.bind(ipHash)
-						.all();
+					await upsertIp(ip, env);
 				}
 				return fetch(
 					"https://raw.githubusercontent.com/zane-ops/zane-ops/main/deploy.mk",
@@ -79,7 +129,7 @@ export default {
 					results: [data],
 				} = await env.DB.prepare(
 					"SELECT count(ip_hash) as total FROM ip_registry",
-				).all();
+				).all<{ total: number }>();
 				return Response.json(data);
 			}
 			case "/api/releases": {
@@ -140,20 +190,13 @@ export default {
 
 				const ip = request.headers.get("cf-connecting-ip");
 				if (ip) {
-					const ipHash = await generate256Hash(ip);
-
-					// insert IP if not in data
-					await env.DB.prepare(
-						"INSERT INTO ip_registry (ip_hash) VALUES (?) ON CONFLICT (ip_hash) DO NOTHING RETURNING *;",
-					)
-						.bind(ipHash)
-						.all();
+					const { hmac: ipHmac } = await upsertIp(ip, env);
 
 					// Check last ping time
 					const lastPingResult: Ping | null = await env.DB.prepare(
-						"SELECT ping_timestamp FROM ip_pings WHERE ip_hash = ? ORDER BY ping_timestamp DESC LIMIT 1;",
+						"SELECT ping_timestamp FROM ip_pings WHERE ip_hmac = ? ORDER BY ping_timestamp DESC LIMIT 1;",
 					)
-						.bind(ipHash)
+						.bind(ipHmac)
 						.first();
 
 					const currentTime = new Date();
@@ -171,8 +214,8 @@ export default {
 
 					if (shouldRecordPing) {
 						// Insert ping record
-						await env.DB.prepare("INSERT INTO ip_pings (ip_hash) VALUES (?);")
-							.bind(ipHash)
+						await env.DB.prepare("INSERT INTO ip_pings (ip_hmac) VALUES (?);")
+							.bind(ipHmac)
 							.run();
 
 						return Response.json({
