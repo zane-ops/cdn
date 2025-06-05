@@ -236,9 +236,24 @@ export default {
 					},
 				);
 			}
-			// case "/api/pings": {
-			//   return Response.json({})
-			// }
+			case "/api/pings": {
+				if (request.method !== "GET") {
+					return addCors(
+						new Response("Method Not Allowed", {
+							status: 405,
+							headers: {
+								Allow: "GET",
+								"Content-Type": "text/plain",
+							},
+						}),
+					);
+				}
+
+				const { results } = await env.DB.prepare(
+					"SELECT ip_hmac, ping_timestamp FROM ip_pings ORDER BY ping_timestamp DESC",
+				).all();
+				return addCors(Response.json(results));
+			}
 			default: {
 				return addCors(
 					new Response("Page not found!", {
