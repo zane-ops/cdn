@@ -56,6 +56,49 @@ function durationToMs(
 	return value * multipliers[unit];
 }
 
+function getDateRange(
+	period: string,
+	currentDate: Date = new Date(),
+): { startISO: string; endISO: string } | null {
+	const end = new Date(currentDate); // Make a copy
+	let start = new Date(currentDate); // Make a copy
+
+	switch (period) {
+		case "24h":
+			start.setHours(start.getHours() - 24);
+			break;
+		case "7d":
+			start.setDate(start.getDate() - 7);
+			start.setHours(0, 0, 0, 0); // Set to the beginning of the day
+			break;
+		case "30d":
+			start.setDate(start.getDate() - 30);
+			start.setHours(0, 0, 0, 0); // Set to the beginning of the day
+			break;
+		case "all":
+			return null;
+		default:
+			// Unrecognized period
+			return null;
+	}
+
+	return {
+		startISO: start.toISOString(),
+		endISO: end.toISOString(),
+	};
+}
+
+function parseQueryParam<T extends string>(
+	value: string | null,
+	defaultValue: T,
+	allowedValues?: readonly T[],
+): T {
+	if (value && (!allowedValues || (allowedValues as readonly string[]).includes(value))) {
+		return value as T;
+	}
+	return defaultValue;
+}
+
 type Release = {
 	tag_name: string;
 	html_url: string;
@@ -253,6 +296,204 @@ export default {
 					"SELECT ip_hmac, ping_timestamp FROM ip_pings ORDER BY ping_timestamp DESC",
 				).all();
 				return addCors(Response.json(results));
+			}
+			case "/api/stats/summary": {
+				if (request.method !== "GET") {
+					return addCors(
+						new Response("Method Not Allowed", {
+							status: 405,
+							headers: { Allow: "GET", "Content-Type": "text/plain" },
+						}),
+					);
+				}
+
+				const totalPingsQuery = env.DB.prepare(
+					"SELECT COUNT(*) as totalPings FROM ip_pings;",
+				);
+				const totalUniqueUsersQuery = env.DB.prepare(
+					"SELECT COUNT(DISTINCT ip_hmac) as totalUniqueUsers FROM ip_pings;",
+				);
+				const mostActiveUserQuery = env.DB.prepare(
+					"SELECT ip_hmac, COUNT(*) as ping_count FROM ip_pings GROUP BY ip_hmac ORDER BY ping_count DESC LIMIT 1;",
+				);
+
+				const [
+					totalPingsResult,
+					totalUniqueUsersResult,
+					mostActiveUserResult,
+				] = await Promise.all([
+					totalPingsQuery.first<{ totalPings: number }>(),
+					totalUniqueUsersQuery.first<{ totalUniqueUsers: number }>(),
+					mostActiveUserQuery.first<{ ip_hmac: string; ping_count: number } | null>(),
+				]);
+
+				const responseData = {
+					totalPings: totalPingsResult?.totalPings ?? 0,
+					totalUniqueUsers: totalUniqueUsersResult?.totalUniqueUsers ?? 0,
+					mostActiveUser: mostActiveUserResult
+						? {
+								ipHmac: mostActiveUserResult.ip_hmac,
+								pingCount: mostActiveUserResult.ping_count,
+						  }
+						: null,
+				};
+
+				return addCors(Response.json(responseData));
+			}
+			case "/api/pings/grouped": {
+				if (request.method !== "GET") {
+					return addCors(
+						new Response("Method Not Allowed", {
+							status: 405,
+							headers: { Allow: "GET", "Content-Type": "text/plain" },
+						}),
+					);
+				}
+
+				const url = new URL(request.url);
+				const periodParam = url.searchParams.get("period");
+				const countTypeParam = url.searchParams.get("countType");
+
+				const parsedPeriod = parseQueryParam(
+					periodParam,
+					"30d",
+					["24h", "7d", "30d", "all"] as const,
+				);
+				const parsedCountType = parseQueryParam(
+					countTypeParam,
+					"unique",
+					["unique", "total"] as const,
+				);
+
+				const dateRange = getDateRange(parsedPeriod);
+
+				let selectCountSQL;
+				if (parsedCountType === "unique") {
+					selectCountSQL = "COUNT(DISTINCT ip_hmac) as count";
+				} else {
+					selectCountSQL = "COUNT(*) as count";
+				}
+
+				let sqlQuery = `
+					SELECT
+						strftime('%Y-%m-%d', ping_timestamp) as day,
+						${selectCountSQL}
+					FROM ip_pings
+				`;
+				const bindings: string[] = [];
+
+				if (dateRange) {
+					sqlQuery += " WHERE ping_timestamp >= ? AND ping_timestamp <= ?";
+					bindings.push(dateRange.startISO, dateRange.endISO);
+				}
+
+				sqlQuery += `
+					GROUP BY strftime('%Y-%m-%d', ping_timestamp)
+					ORDER BY day ASC;
+				`;
+
+				try {
+					const { results } = await env.DB.prepare(sqlQuery)
+						.bind(...bindings)
+						.all<{ day: string; count: number }>();
+					return addCors(Response.json(results ?? []));
+				} catch (e: any) {
+					console.error("Error querying grouped pings:", e.message);
+					return addCors(
+						new Response("Error querying database", { status: 500 }),
+					);
+				}
+			}
+			case "/api/pings/unique-activity": {
+				if (request.method !== "GET") {
+					return addCors(
+						new Response("Method Not Allowed", {
+							status: 405,
+							headers: { Allow: "GET", "Content-Type": "text/plain" },
+						}),
+					);
+				}
+
+				const url = new URL(request.url);
+				const pageParam = url.searchParams.get("page");
+				const pageSizeParam = url.searchParams.get("pageSize");
+				const sortByParam = url.searchParams.get("sortBy");
+				const sortOrderParam = url.searchParams.get("sortOrder");
+
+				let page = pageParam ? parseInt(pageParam, 10) : 1;
+				if (isNaN(page) || page < 1) page = 1;
+
+				let pageSize = pageSizeParam ? parseInt(pageSizeParam, 10) : 10;
+				if (isNaN(pageSize) || pageSize < 1) pageSize = 10;
+				if (pageSize > 100) pageSize = 100; // Max page size
+
+				const sortBy = parseQueryParam(
+					sortByParam,
+					"first_seen",
+					["first_seen", "total_pings"] as const,
+				);
+				const sortOrder = parseQueryParam(
+					sortOrderParam,
+					"desc",
+					["asc", "desc"] as const,
+				);
+
+				const offset = (page - 1) * pageSize;
+
+				// Validate sortBy to prevent SQL injection before using in ORDER BY
+				const validSortByColumns = {
+					first_seen: "first_seen",
+					total_pings: "total_pings",
+				};
+				const orderByColumn = validSortByColumns[sortBy];
+
+
+				const dataQuerySQL = `
+					SELECT
+						ip_hmac,
+						MIN(ping_timestamp) as first_seen,
+						MAX(ping_timestamp) as last_seen,
+						COUNT(ping_timestamp) as total_pings
+					FROM ip_pings
+					GROUP BY ip_hmac
+					ORDER BY ${orderByColumn} ${sortOrder.toUpperCase()}
+					LIMIT ? OFFSET ?;
+				`;
+
+				const countQuerySQL = `
+					SELECT COUNT(*) as totalItems
+					FROM (SELECT 1 FROM ip_pings GROUP BY ip_hmac);
+				`;
+
+				try {
+					const dataStatement = env.DB.prepare(dataQuerySQL).bind(pageSize, offset);
+					const countStatement = env.DB.prepare(countQuerySQL);
+
+					const [dataResults, countResult] = await Promise.all([
+						dataStatement.all<{ ip_hmac: string; first_seen: string; last_seen: string; total_pings: number }>(),
+						countStatement.first<{ totalItems: number }>(),
+					]);
+
+					const totalItems = countResult?.totalItems ?? 0;
+					const totalPages = Math.ceil(totalItems / pageSize);
+
+					return addCors(
+						Response.json({
+							data: dataResults.results ?? [],
+							pagination: {
+								totalItems,
+								currentPage: page,
+								pageSize,
+								totalPages,
+							},
+						}),
+					);
+				} catch (e: any) {
+					console.error("Error querying unique activity:", e.message);
+					return addCors(
+						new Response("Error querying database", { status: 500 }),
+					);
+				}
 			}
 			default: {
 				return addCors(
