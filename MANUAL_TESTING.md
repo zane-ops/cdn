@@ -88,14 +88,27 @@ This document outlines the steps to manually test the API endpoints for the Work
 
 ### 6. `/api/stats/summary`
 
-*   **Purpose:** Retrieves a summary of ping statistics.
+*   **Purpose:** Retrieves a summary of ping statistics, optionally filtered by a time period.
 *   **Method:** `GET`
-*   **URL:** `YOUR_WORKER_URL/api/stats/summary`
-*   **Verification:**
+*   **Base URL:** `YOUR_WORKER_URL/api/stats/summary`
+*   **Query Parameters:**
+    *   `period` (optional, default 'all'): '24h', '7d', '30d', '6month', 'all'.
+*   **Test Cases:**
+    *   **Default (all time):** `YOUR_WORKER_URL/api/stats/summary`
+        *   Verify: Stats (`totalPings`, `totalUniqueUsers`, `mostActiveUser`) reflect all pings in the database.
+    *   **Last 24 hours:** `YOUR_WORKER_URL/api/stats/summary?period=24h`
+        *   Verify: Stats are calculated only from pings within the last 24 hours. Compare with data from `/api/pings/grouped?period=24h` if needed.
+    *   **Last 7 days:** `YOUR_WORKER_URL/api/stats/summary?period=7d`
+        *   Verify: Stats reflect pings from the last 7 days.
+    *   **Last 30 days:** `YOUR_WORKER_URL/api/stats/summary?period=30d`
+        *   Verify: Stats reflect pings from the last 30 days.
+    *   **Last 6 months:** `YOUR_WORKER_URL/api/stats/summary?period=6month`
+        *   Verify: Stats reflect pings from the last 6 months.
+*   **Verification (General):**
     *   Response status: `200 OK`.
-    *   Response body: A JSON object with `totalPings`, `totalUniqueUsers`, and `mostActiveUser` (which can be an object with `ipHmac` and `pingCount`, or `null` if no pings).
-    *   Example (with activity): `{"totalPings":123,"totalUniqueUsers":45,"mostActiveUser":{"ipHmac":"some_hmac","pingCount":10}}`
-    *   Example (no activity): `{"totalPings":0,"totalUniqueUsers":0,"mostActiveUser":null}`
+    *   Response body: A JSON object with `totalPings`, `totalUniqueUsers`, and `mostActiveUser` (which can be an object with `ipHmac` and `pingCount`, or `null` if no pings within the period).
+    *   Example (with activity for the period): `{"totalPings":123,"totalUniqueUsers":45,"mostActiveUser":{"ipHmac":"some_hmac","pingCount":10}}`
+    *   Example (no activity for the period): `{"totalPings":0,"totalUniqueUsers":0,"mostActiveUser":null}`
 
 ### 7. `/api/pings/unique-activity`
 

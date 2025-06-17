@@ -311,15 +311,32 @@ export default {
 					);
 				}
 
+				const url = new URL(request.url);
+				const periodParam = url.searchParams.get("period");
+				const parsedPeriod = parseQueryParam(
+					periodParam,
+					"all",
+					["24h", "7d", "30d", "6month", "all"] as const,
+				);
+
+				const dateRange = getDateRange(parsedPeriod);
+				let whereClause = "";
+				const bindings: string[] = [];
+
+				if (dateRange) {
+					whereClause = "WHERE ping_timestamp >= ? AND ping_timestamp <= ?";
+					bindings.push(dateRange.startISO, dateRange.endISO);
+				}
+
 				const totalPingsQuery = env.DB.prepare(
-					"SELECT COUNT(*) as totalPings FROM ip_pings;",
-				);
+					`SELECT COUNT(*) as totalPings FROM ip_pings ${whereClause}`,
+				).bind(...bindings);
 				const totalUniqueUsersQuery = env.DB.prepare(
-					"SELECT COUNT(DISTINCT ip_hmac) as totalUniqueUsers FROM ip_pings;",
-				);
+					`SELECT COUNT(DISTINCT ip_hmac) as totalUniqueUsers FROM ip_pings ${whereClause}`,
+				).bind(...bindings);
 				const mostActiveUserQuery = env.DB.prepare(
-					"SELECT ip_hmac, COUNT(*) as ping_count FROM ip_pings GROUP BY ip_hmac ORDER BY ping_count DESC LIMIT 1;",
-				);
+					`SELECT ip_hmac, COUNT(*) as ping_count FROM ip_pings ${whereClause} GROUP BY ip_hmac ORDER BY ping_count DESC LIMIT 1`,
+				).bind(...bindings);
 
 				const [
 					totalPingsResult,
