@@ -103,13 +103,27 @@ function parseQueryParam<T extends string>(
 	return defaultValue;
 }
 
-type Release = {
-	tag_name: string;
-	html_url: string;
-};
-type Ping = {
-	ping_timestamp: string;
-};
+// Imported types from src/types.ts
+import {
+	StatsResponse,
+	ReleasesResponse,
+	ReleaseItem,
+	LatestReleaseResponse,
+	PingResponse,
+	PingsResponse,
+	PingRecord,
+	SummaryStatsResponse,
+	// MostActiveUser, // This is part of SummaryStatsResponse, not directly used for variables
+	GroupedPingsResponse,
+	GroupedPing,
+	UniqueActivityResponse,
+	UniqueActivityRecord,
+	// PaginationInfo, // Part of UniqueActivityResponse
+	PeriodOption,
+	CountTypeOption,
+	SortByOption,
+	SortOrderOption,
+} from './types';
 
 async function upsertIp(ip: string, env: Env) {
 	const hmac = await generateDoubleHash(ip, env.IP_HASH_PEPPER);
@@ -172,11 +186,11 @@ export default {
 					results: [data],
 				} = await env.DB.prepare(
 					"SELECT count(id) as total FROM ip_registry",
-				).all<{ total: number }>();
-				return Response.json(data);
+				).all<StatsResponse>(); // Assuming 'total' is the structure
+				return Response.json(data as StatsResponse);
 			}
 			case "/api/releases": {
-				const releases: Array<Release> = await fetch(
+				const releases: Array<ReleaseItem> = await fetch(
 					"https://api.github.com/repos/zane-ops/zane-ops/releases",
 					{
 						method: "GET",
@@ -195,12 +209,12 @@ export default {
 						releases.map((release) => ({
 							tag: release.tag_name,
 							url: release.html_url,
-						})),
-					),
+						} as ReleaseItem)),
+					) as unknown as ReleasesResponse, // Outer type cast
 				);
 			}
 			case "/api/latest-release": {
-				const release: Release = await fetch(
+				const release: ReleaseItem = await fetch(
 					"https://api.github.com/repos/zane-ops/zane-ops/releases/latest",
 					{
 						method: "GET",
@@ -217,7 +231,7 @@ export default {
 					Response.json({
 						tag: release.tag_name,
 						url: release.html_url,
-					}),
+					} as LatestReleaseResponse),
 				);
 			}
 			case "/api/ping": {
@@ -236,11 +250,11 @@ export default {
 					const { hmac: ipHmac } = await upsertIp(ip, env);
 
 					// Check last ping time
-					const lastPingResult: Ping | null = await env.DB.prepare(
+					const lastPingResult = await env.DB.prepare(
 						"SELECT ping_timestamp FROM ip_pings WHERE ip_hmac = ? ORDER BY ping_timestamp DESC LIMIT 1;",
 					)
 						.bind(ipHmac)
-						.first();
+						.first<{ ping_timestamp: string }>(); // Type the D1 result structure
 
 					const currentTime = new Date();
 					let shouldRecordPing = true;
@@ -264,13 +278,13 @@ export default {
 						return Response.json({
 							success: true,
 							message: "Ping recorded successfully",
-						});
+						} as PingResponse);
 					}
 
 					return Response.json({
 						success: false,
 						message: "Ping not recorded - less than 30 minutes since last ping",
-					});
+					} as PingResponse);
 				}
 
 				return Response.json(
@@ -298,8 +312,8 @@ export default {
 
 				const { results } = await env.DB.prepare(
 					"SELECT ip_hmac, ping_timestamp FROM ip_pings ORDER BY ping_timestamp DESC",
-				).all();
-				return addCors(Response.json(results));
+				).all<PingRecord>();
+				return addCors(Response.json(results as PingsResponse));
 			}
 			case "/api/stats/summary": {
 				if (request.method !== "GET") {
@@ -313,10 +327,10 @@ export default {
 
 				const url = new URL(request.url);
 				const periodParam = url.searchParams.get("period");
-				const parsedPeriod = parseQueryParam(
+				const parsedPeriod = parseQueryParam<PeriodOption>(
 					periodParam,
 					"all",
-					["24h", "7d", "30d", "6month", "all"] as const,
+					Object.freeze(['24h', '7d', '30d', '6month', 'all'] as const),
 				);
 
 				const dateRange = getDateRange(parsedPeriod);
@@ -359,7 +373,7 @@ export default {
 						: null,
 				};
 
-				return addCors(Response.json(responseData));
+				return addCors(Response.json(responseData as SummaryStatsResponse));
 			}
 			case "/api/pings/grouped": {
 				if (request.method !== "GET") {
@@ -375,15 +389,15 @@ export default {
 				const periodParam = url.searchParams.get("period");
 				const countTypeParam = url.searchParams.get("countType");
 
-				const parsedPeriod = parseQueryParam(
+				const parsedPeriod = parseQueryParam<PeriodOption>(
 					periodParam,
 					"30d",
-					["24h", "7d", "30d", "6month", "all"] as const,
+					Object.freeze(['24h', '7d', '30d', '6month', 'all'] as const),
 				);
-				const parsedCountType = parseQueryParam(
+				const parsedCountType = parseQueryParam<CountTypeOption>(
 					countTypeParam,
 					"unique",
-					["unique", "total"] as const,
+					Object.freeze(['unique', 'total'] as const),
 				);
 
 				const dateRange = getDateRange(parsedPeriod);
@@ -416,8 +430,8 @@ export default {
 				try {
 					const { results } = await env.DB.prepare(sqlQuery)
 						.bind(...bindings)
-						.all<{ day: string; count: number }>();
-					return addCors(Response.json(results ?? []));
+						.all<GroupedPing>();
+					return addCors(Response.json((results ?? []) as GroupedPingsResponse));
 				} catch (e: any) {
 					console.error("Error querying grouped pings:", e.message);
 					return addCors(
@@ -448,15 +462,15 @@ export default {
 				if (isNaN(pageSize) || pageSize < 1) pageSize = 10;
 				if (pageSize > 100) pageSize = 100; // Max page size
 
-				const sortBy = parseQueryParam(
+				const sortBy = parseQueryParam<SortByOption>(
 					sortByParam,
 					"first_seen",
-					["first_seen", "total_pings"] as const,
+					Object.freeze(['first_seen', 'total_pings'] as const),
 				);
-				const sortOrder = parseQueryParam(
+				const sortOrder = parseQueryParam<SortOrderOption>(
 					sortOrderParam,
 					"desc",
-					["asc", "desc"] as const,
+					Object.freeze(['asc', 'desc'] as const),
 				);
 
 				const offset = (page - 1) * pageSize;
@@ -490,25 +504,25 @@ export default {
 					const dataStatement = env.DB.prepare(dataQuerySQL).bind(pageSize, offset);
 					const countStatement = env.DB.prepare(countQuerySQL);
 
-					const [dataResults, countResult] = await Promise.all([
-						dataStatement.all<{ ip_hmac: string; first_seen: string; last_seen: string; total_pings: number }>(),
+					const [dataResultsD1, countResult] = await Promise.all([
+						dataStatement.all<UniqueActivityRecord>(),
 						countStatement.first<{ totalItems: number }>(),
 					]);
 
 					const totalItems = countResult?.totalItems ?? 0;
 					const totalPages = Math.ceil(totalItems / pageSize);
 
-					return addCors(
-						Response.json({
-							data: dataResults.results ?? [],
-							pagination: {
-								totalItems,
-								currentPage: page,
-								pageSize,
-								totalPages,
-							},
-						}),
-					);
+					const responsePayload: UniqueActivityResponse = {
+						data: dataResultsD1.results ?? [],
+						pagination: {
+							totalItems,
+							currentPage: page,
+							pageSize,
+							totalPages,
+						},
+					};
+
+					return addCors(Response.json(responsePayload));
 				} catch (e: any) {
 					console.error("Error querying unique activity:", e.message);
 					return addCors(
