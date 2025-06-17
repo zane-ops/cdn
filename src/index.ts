@@ -75,6 +75,10 @@ function getDateRange(
 			start.setDate(start.getDate() - 30);
 			start.setHours(0, 0, 0, 0); // Set to the beginning of the day
 			break;
+		case "6month":
+			start.setMonth(start.getMonth() - 6);
+			start.setHours(0, 0, 0, 0); // Set to the beginning of the day
+			break;
 		case "all":
 			return null;
 		default:
@@ -279,6 +283,24 @@ export default {
 					},
 				);
 			}
+			case "/api/pings": {
+				if (request.method !== "GET") {
+					return addCors(
+						new Response("Method Not Allowed", {
+							status: 405,
+							headers: {
+								Allow: "GET",
+								"Content-Type": "text/plain",
+							},
+						}),
+					);
+				}
+
+				const { results } = await env.DB.prepare(
+					"SELECT ip_hmac, ping_timestamp FROM ip_pings ORDER BY ping_timestamp DESC",
+				).all();
+				return addCors(Response.json(results));
+			}
 			case "/api/stats/summary": {
 				if (request.method !== "GET") {
 					return addCors(
@@ -339,7 +361,7 @@ export default {
 				const parsedPeriod = parseQueryParam(
 					periodParam,
 					"30d",
-					["24h", "7d", "30d", "all"] as const,
+					["24h", "7d", "30d", "6month", "all"] as const,
 				);
 				const parsedCountType = parseQueryParam(
 					countTypeParam,
