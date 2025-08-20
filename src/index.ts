@@ -165,6 +165,7 @@ function addCors(response: Response) {
 type GithubRelease = {
     tag_name: string;
     html_url: string;
+    body: string;
 };
 type Ping = {
     ping_timestamp: string;
@@ -283,6 +284,7 @@ export default {
                     Response.json({
                         tag: release.tag_name,
                         url: release.html_url,
+                        body: release.body,
                     })
                 );
             }
