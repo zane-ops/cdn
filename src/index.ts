@@ -237,6 +237,7 @@ export default {
                     Response.json({
                         tag: release.tag_name,
                         url: release.html_url,
+                        body: release.body,
                     })
                 );
             }
