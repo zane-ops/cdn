@@ -672,6 +672,7 @@ export default {
                 const res = await page.goto(dockerHubURL);
 
                 let imageSrc: string | null = null;
+                let message: string = "Not found";
 
                 if (res?.status() === 200) {
                     const el = await page.$('[data-testid="repository-logo"]');
@@ -680,13 +681,32 @@ export default {
                             (img) => img.getAttribute("src"),
                             el
                         );
+                    } else {
+                        message = `Page ${dockerHubURL} does not have an associated image`;
+                        // ...and store in the DB
+                        await env.DB.prepare(
+                            `
+                            INSERT INTO docker_thumbnails (namespace, url)
+                            VALUES (?, ?)
+                            ON CONFLICT DO NOTHING
+                            `
+                        )
+                            .bind(parsedImage.namespace, null)
+                            .run();
                     }
+                } else {
+                    message = `Image \`${parsedImage.namespace}/${parsedImage.repository}\` does not exist on dockerhub`;
                 }
 
                 if (!imageSrc) {
-                    return new Response(null, {
-                        status: 404,
-                    });
+                    return Response.json(
+                        {
+                            message,
+                        },
+                        {
+                            status: 404,
+                        }
+                    );
                 }
 
                 // ...and store in the DB
