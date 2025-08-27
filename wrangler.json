@@ -4,10 +4,14 @@
  */
 {
 	"$schema": "node_modules/wrangler/config-schema.json",
+	"compatibility_flags": ["nodejs_compat"],
 	"compatibility_date": "2025-04-01",
 	"main": "src/index.ts",
 	"name": "zaneops-cdn",
 	"upload_source_maps": true,
+	"browser": {
+		"binding": "BROWSER"
+	},
 	"d1_databases": [
 		{
 			"binding": "DB",
@@ -22,7 +26,7 @@
 	 * Smart Placement
 	 * Docs: https://developers.cloudflare.com/workers/configuration/smart-placement/#smart-placement
 	 */
-	"placement": { "mode": "smart" }
+	"placement": { "mode": "smart" },
 
 	/**
 	 * Bindings
@@ -35,7 +39,10 @@
 	 * Environment Variables
 	 * https://developers.cloudflare.com/workers/wrangler/configuration/#environment-variables
 	 */
-	// "vars": { "MY_VARIABLE": "production_value" }
+	"vars": {
+		"GITHUB_PAT": "ghp_xxx",
+		"IP_HASH_PEPPER": "hash"
+	}
 	/**
 	 * Note: Use secrets to store sensitive data.
 	 * https://developers.cloudflare.com/workers/configuration/secrets/

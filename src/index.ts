@@ -7,6 +7,23 @@
  *
  * Learn more at https://developers.cloudflare.com/workers/
  */
+import puppeteer from "@cloudflare/puppeteer";
+// Imported types from src/types.ts
+import type {
+    StatsResponse,
+    ReleaseItem,
+    PingResponse,
+    SummaryStatsResponse,
+    GroupedPingsResponse,
+    GroupedPing,
+    UniqueActivityResponse,
+    UniqueActivityRecord,
+    PeriodOption,
+    CountTypeOption,
+    SortByOption,
+    SortOrderOption,
+} from "./types";
+import type { Env, ExportedHandler } from "../worker-configuration";
 
 async function generate256Hash(message: string) {
     const msgUint8 = new TextEncoder().encode(message); // encode as (utf-8) Uint8Array
@@ -61,7 +78,7 @@ function getDateRange(
     currentDate: Date = new Date()
 ): { startISO: string; endISO: string } | null {
     const end = new Date(currentDate); // Make a copy
-    let start = new Date(currentDate); // Make a copy
+    const start = new Date(currentDate); // Make a copy
 
     switch (period) {
         case "24h":
@@ -106,21 +123,21 @@ function parseQueryParam<T extends string>(
     return defaultValue;
 }
 
-// Imported types from src/types.ts
-import {
-    StatsResponse,
-    ReleaseItem,
-    PingResponse,
-    SummaryStatsResponse,
-    GroupedPingsResponse,
-    GroupedPing,
-    UniqueActivityResponse,
-    UniqueActivityRecord,
-    PeriodOption,
-    CountTypeOption,
-    SortByOption,
-    SortOrderOption,
-} from "./types";
+function parseDockerHubImage(
+    image: string
+): { namespace: string | null; repository: string } | null {
+    const regex =
+        /^(?:([a-z0-9]+(?:[._-][a-z0-9]+)*)\/)?([a-z0-9]+(?:[._-][a-z0-9]+)*)$/;
+    const match = image.match(regex);
+
+    if (!match) return null;
+
+    const [, namespace, repository] = match;
+    return {
+        namespace: namespace ?? null, // root images have no namespace
+        repository,
+    };
+}
 
 async function upsertIp(ip: string, env: Env) {
     const hmac = await generateDoubleHash(ip, env.IP_HASH_PEPPER);
@@ -167,12 +184,10 @@ type GithubRelease = {
     html_url: string;
     body: string;
 };
-type Ping = {
-    ping_timestamp: string;
-};
 
 export default {
-    async fetch(request, env, ctx) {
+    // @ts-expect-error
+    async fetch(request, env, _) {
         // Handle CORS preflight requests
         if (request.method === "OPTIONS") {
             return addCors(new Response(null));
@@ -230,7 +245,7 @@ export default {
                     );
                 }
 
-                const release: GithubRelease = await releaseResponse.json();
+                const release = (await releaseResponse.json()) as GithubRelease;
                 console.log({ release });
 
                 return addCors(
@@ -242,7 +257,7 @@ export default {
                 );
             }
             case "/api/releases": {
-                const releases: Array<GithubRelease> = await fetch(
+                const releases = (await fetch(
                     "https://api.github.com/repos/zane-ops/zane-ops/releases",
                     {
                         method: "GET",
@@ -253,7 +268,7 @@ export default {
                             "X-GitHub-Api-Version": "2022-11-28",
                         },
                     }
-                ).then((response) => response.json());
+                ).then((response) => response.json())) as Array<GithubRelease>;
                 console.log({ releases });
 
                 return addCors(
@@ -269,7 +284,7 @@ export default {
                 );
             }
             case "/api/latest-release": {
-                const release: GithubRelease = await fetch(
+                const release = (await fetch(
                     "https://api.github.com/repos/zane-ops/zane-ops/releases/latest",
                     {
                         method: "GET",
@@ -280,7 +295,7 @@ export default {
                             "X-GitHub-Api-Version": "2022-11-28",
                         },
                     }
-                ).then((response) => response.json());
+                ).then((response) => response.json())) as GithubRelease;
                 return addCors(
                     Response.json({
                         tag: release.tag_name,
@@ -467,7 +482,7 @@ export default {
 
                 const dateRange = getDateRange(parsedPeriod);
 
-                let selectCountSQL;
+                let selectCountSQL: string;
                 if (parsedCountType === "unique") {
                     selectCountSQL = "COUNT(DISTINCT ip_hmac) as count";
                 } else {
@@ -601,6 +616,91 @@ export default {
                         new Response("Error querying database", { status: 500 })
                     );
                 }
+            }
+            case "/api/docker-image-thumbnail": {
+                if (request.method !== "GET") {
+                    return new Response("Method Not Allowed", {
+                        status: 405,
+                        headers: {
+                            Allow: "GET",
+                            "Content-Type": "text/plain",
+                        },
+                    });
+                }
+
+                const image = url.searchParams.get("image");
+
+                if (!image) {
+                    return new Response(null, {
+                        status: 404,
+                    });
+                }
+
+                const parsedImage = parseDockerHubImage(image);
+                if (!parsedImage) {
+                    return new Response(null, {
+                        status: 404,
+                    });
+                }
+
+                // if it's an official docker hub image, we don't need to store it, the image URL is fixed
+                if (
+                    !parsedImage.namespace ||
+                    parsedImage.namespace === "library"
+                ) {
+                    return fetch(
+                        `https://raw.githubusercontent.com/docker-library/docs/refs/heads/master/${parsedImage.repository}/logo.png`
+                    );
+                }
+
+                const existingThumbnail = await env.DB.prepare(
+                    "SELECT url FROM docker_thumbnails WHERE namespace = ? LIMIT 1;"
+                )
+                    .bind(parsedImage.namespace ?? parsedImage.repository)
+                    .first<{ url: string }>();
+
+                if (existingThumbnail) {
+                    return fetch(existingThumbnail.url);
+                }
+
+                const dockerHubURL = `https://hub.docker.com/r/${parsedImage.namespace}/${parsedImage.repository}`;
+
+                // fetch image from docker hub...
+                // @ts-expect-error
+                const browser = await puppeteer.launch(env.BROWSER);
+                const page = await browser.newPage();
+                const res = await page.goto(dockerHubURL);
+
+                let imageSrc: string | null = null;
+
+                if (res?.status() === 200) {
+                    const el = await page.$('[data-testid="repository-logo"]');
+                    if (el) {
+                        imageSrc = await page.evaluate(
+                            (img) => img.getAttribute("src"),
+                            el
+                        );
+                    }
+                }
+
+                if (!imageSrc) {
+                    return new Response(null, {
+                        status: 404,
+                    });
+                }
+
+                // ...and store in the DB
+                await env.DB.prepare(
+                    `
+                    INSERT INTO docker_thumbnails (namespace, url)
+                    VALUES (?, ?)
+                    ON CONFLICT DO NOTHING
+                    `
+                )
+                    .bind(parsedImage.namespace, imageSrc)
+                    .run();
+
+                return fetch(imageSrc);
             }
             default: {
                 return addCors(
