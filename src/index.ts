@@ -123,6 +123,7 @@ import {
 } from "./types";
 
 async function upsertIp(ip: string, env: Env) {
+    // v2
     const hmac = await generateDoubleHash(ip, await env.ZANEOPS_CDN_IP_HASH_PEPPER.get());
     await env.DB.prepare(
         `
