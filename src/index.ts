@@ -187,7 +187,7 @@ export default {
                     await upsertIp(ip, env);
                 }
                 return fetch(
-                    "https://raw.githubusercontent.com/zane-ops/zane-ops/main/deploy.mk"
+                    "https://raw.githubusercontent.com/zane-ops/zane-ops/feat/pull-request-previews-gitlab/deploy-scripts/Makefile"
                 );
             }
             case "/install.sh": {
