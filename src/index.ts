@@ -189,6 +189,15 @@ export default {
                     "https://raw.githubusercontent.com/zane-ops/zane-ops/main/deploy.mk"
                 );
             }
+            case "/install.sh": {
+                const ip = request.headers.get("cf-connecting-ip");
+                if (ip) {
+                    await upsertIp(ip, env);
+                }
+                return fetch(
+                    "https://github.com/zane-ops/zane-ops/raw/refs/heads/feat/pull-request-previews-gitlab/install.sh"
+                );
+            }
             case "/api/stats": {
                 const {
                     results: [data],
