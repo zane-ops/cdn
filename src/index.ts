@@ -123,15 +123,15 @@ import {
 } from "./types";
 
 async function upsertIp(ip: string, env: Env) {
-    const hmac = await generateDoubleHash(ip, env.IP_HASH_PEPPER);
+    const hmac = await generateDoubleHash(ip, await env.IP_HASH_PEPPER.get());
     await env.DB.prepare(
         `
-	  INSERT INTO ip_registry (ip_hmac)
-	  VALUES (?)
+	  INSERT INTO ip_registry (ip_hmac, migrated)
+	  VALUES (?, ?)
 	  ON CONFLICT DO NOTHING
 	`
     )
-        .bind(hmac)
+        .bind(hmac, 1)
         .run();
     return {
         hmac,
