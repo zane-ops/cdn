@@ -195,7 +195,7 @@ export default {
                     await upsertIp(ip, env);
                 }
                 return fetch(
-                    "https://github.com/zane-ops/zane-ops/raw/refs/heads/feat/pull-request-previews-gitlab/install.sh"
+                    "https://raw.githubusercontent.com/zane-ops/zane-ops/feat/pull-request-previews-gitlab/install.sh"
                 );
             }
             case "/api/stats": {
