@@ -123,7 +123,7 @@ import {
 } from "./types";
 
 async function upsertIp(ip: string, env: Env) {
-    const hmac = await generateDoubleHash(ip, env.IP_HASH_PEPPER);
+    const hmac = await generateDoubleHash(ip, await env.ZANEOPS_CDN_IP_HASH_PEPPER.get());
     await env.DB.prepare(
         `
 	  INSERT INTO ip_registry (ip_hmac, migrated)
