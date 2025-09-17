@@ -18,7 +18,7 @@
 	],
 	 "secrets_store_secrets": [
     {
-      "binding": "IP_HASH_PEPPER",
+      "binding": "IP_HASH_PEPPERR",
       "store_id": "8e15c89300e04e24801b806eff4ac8cd",
       "secret_name": "ZANEOPS_CDN_IP_HASH_PEPPER"
     }

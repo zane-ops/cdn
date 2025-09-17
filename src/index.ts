@@ -123,7 +123,7 @@ import {
 } from "./types";
 
 async function upsertIp(ip: string, env: Env) {
-    const hmac = await generateDoubleHash(ip, await env.IP_HASH_PEPPER.get());
+    const hmac = await generateDoubleHash(ip, await env.IP_HASH_PEPPERR.get());
     await env.DB.prepare(
         `
 	  INSERT INTO ip_registry (ip_hmac, migrated)
