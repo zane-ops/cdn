@@ -4,6 +4,7 @@
  */
 {
 	"$schema": "node_modules/wrangler/config-schema.json",
+	"keep_vars": true,
 	"compatibility_date": "2025-04-01",
 	"main": "src/index.ts",
 	"name": "zaneops-cdn",
