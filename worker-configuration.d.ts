@@ -8,7 +8,7 @@ declare namespace Cloudflare {
 }
 interface Env extends Cloudflare.Env {
 	GITHUB_PAT: string;
-	IP_HASH_PEPPER: string;
+	IP_HASH_PEPPER: {get(): Promise<string>} ;
 }
 
 // Begin runtime types
